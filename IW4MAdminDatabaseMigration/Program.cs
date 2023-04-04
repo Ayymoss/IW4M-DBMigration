@@ -30,16 +30,22 @@ public static class IW4MAdminDatabaseMigration
         Console.WriteLine("Migration to:");
         Console.WriteLine("1) PostgreSQL");
         Console.WriteLine("2) MySQL/MariaDB");
-        Console.Write("Select: [1 or 2] ");
+        Console.Write("Select [1 or 2]: ");
         var input = Console.ReadLine();
         Console.WriteLine();
 
         switch (input)
         {
             case "1":
+                Console.WriteLine("PostgreSQL selected. Press any key to continue migration...");
+                Console.Write("If this is a mistake, press CTRL+C to exit. ");
+                Console.ReadKey();
                 await MigrateToPostgreSql(connectionString, sourceContext);
                 break;
             case "2":
+                Console.WriteLine("MySQL/MariaDB selected. Press any key to continue migration...");
+                Console.Write("If this is a mistake, press CTRL+C to exit. ");
+                Console.ReadKey();
                 await MigrateToMySql(connectionString, sourceContext);
                 break;
             default:
@@ -90,7 +96,7 @@ public static class IW4MAdminDatabaseMigration
         if (!File.Exists(Path.Join(executingDirectory, "_ConnectionString.txt")))
         {
             await File.WriteAllTextAsync(Path.Join(executingDirectory, "_ConnectionString.txt"), defaultConnectionString);
-            Console.WriteLine("Connection string file doesn't exist. _ConnectionString.txt has been created.\nPress any key to exit.");
+            Console.WriteLine("_ConnectionString.txt file doesn't exist. _ConnectionString.txt has been created.\nPress any key to exit.");
             Console.ReadKey();
             Environment.Exit(1);
         }
@@ -98,7 +104,7 @@ public static class IW4MAdminDatabaseMigration
         var connectionString = await File.ReadAllTextAsync(Path.Join(executingDirectory, "_ConnectionString.txt"));
         if (connectionString != defaultConnectionString) return connectionString;
 
-        Console.WriteLine("Connection string file unmodified. Please update _ConnectionString.txt to reflect your target!");
+        Console.WriteLine("_ConnectionString.txt is unmodified. Please update _ConnectionString.txt to reflect your target!");
         Console.WriteLine("Press any key to exit.");
         Console.ReadKey();
         Environment.Exit(1);

@@ -30,8 +30,14 @@ internal static class Migration
         Console.WriteLine($"Migrating {tableDependencyOrder.Count} tables... Please wait...");
         await MigrateTables(sourceContext, targetContextFunc, tableDependencyOrder);
 
-        Console.WriteLine("All tables migrated.");
+        Console.WriteLine();
+        Console.WriteLine("=====================================================");
+        Console.WriteLine("All tables migrated successfully.");
         Console.WriteLine("Change IW4MAdminConfigurationSettings.json to reflect the new database.");
+        Console.WriteLine("If you need further help, please ask in Discord.");
+        Console.WriteLine("IW4MAdmin Support: https://discord.gg/kGKusEzUJp");
+        Console.WriteLine("=====================================================");
+        Console.WriteLine();
         Console.WriteLine("Press any key to exit.");
         Console.ReadKey();
     }
