@@ -5,8 +5,8 @@
         <TargetFramework>net6.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <Version>2023.04.04.1</Version>
-        <RootNamespace>IW4MAdminDatabaseMigration</RootNamespace>
+        <Version>2023.04.05.5</Version>
+        <RootNamespace>IWDataMigration</RootNamespace>
     </PropertyGroup>
 
     <ItemGroup>

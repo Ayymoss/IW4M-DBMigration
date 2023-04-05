@@ -1,4 +1,7 @@
-﻿using Data.Context;
+﻿using System.ComponentModel.DataAnnotations.Schema;
+using System.Reflection;
+using Data.Context;
+using Data.MigrationContext;
 using Data.Models;
 using Data.Models.Client;
 using Data.Models.Client.Stats;
@@ -11,14 +14,14 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using MySqlConnector;
 using Npgsql;
 
-namespace IW4MAdminDatabaseMigration;
+namespace IWDataMigration;
 
 internal static class Migration
 {
     private const int BatchSize = 25_000;
-    private const int AverageSampleSize = 25;
+    private const int AverageSampleSize = 100;
 
-    public static async Task MigrateDataAsync(DatabaseContext sourceContext, Func<DatabaseContext> targetContextFunc, DatabaseType databaseType)
+    public static async Task MigrateDataAsync(DatabaseContext sourceContext, Func<DatabaseContext> targetContextFunc)
     {
         sourceContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
 
@@ -31,7 +34,7 @@ internal static class Migration
         var tableDependencyOrder = GetTableDependencyOrder(targetContextFunc());
 
         Console.WriteLine($"Migrating {tableDependencyOrder.Count} tables... Please wait...");
-        await MigrateTables(sourceContext, targetContextFunc, tableDependencyOrder, databaseType);
+        await MigrateTables(sourceContext, targetContextFunc, tableDependencyOrder);
 
         Console.WriteLine();
         Console.WriteLine("=====================================================");
@@ -56,9 +59,14 @@ internal static class Migration
     }
 
     private static async Task MigrateTables(IAsyncDisposable sourceContext, Func<DatabaseContext> targetContextFunc,
-        IReadOnlyList<Type> tableDependencyOrder, DatabaseType databaseType)
+        IReadOnlyList<Type> tableDependencyOrder)
     {
-        var batchTimes = new Queue<double>(10);
+        // Find the incoming database type so we can check specifically for MySQL later...
+        await using var dbContextInstance = targetContextFunc();
+        var dbContextType = dbContextInstance.GetType();
+        await dbContextInstance.DisposeAsync();
+
+        var batchTimes = new Queue<double>(AverageSampleSize);
 
         for (var i = 0; i < tableDependencyOrder.Count; i++)
         {
@@ -85,25 +93,21 @@ internal static class Migration
                     .Take(BatchSize)
                     .ToListAsync();
 
-                if (databaseType is DatabaseType.MySql)
+                if (dbContextType == typeof(MySqlDatabaseContext))
                 {
                     foreach (var item in batch)
                     {
-                        var properties = item.GetType().GetProperties()
-                            .Where(p => p.PropertyType == typeof(double) || p.PropertyType == typeof(double?));
+                        var properties = item.GetType()
+                            .GetProperties()
+                            .Where(p => p.PropertyType == typeof(double) || p.PropertyType == typeof(double?))
+                            .Where(p => p.GetCustomAttribute<NotMappedAttribute>() is null);
                         foreach (var prop in properties)
                         {
                             var value = prop.GetValue(item);
-                            if (value is not double dValue) continue;
-
-                            if (double.IsPositiveInfinity(dValue))
-                            {
-                                prop.SetValue(item, double.MaxValue);
-                            }
-                            else if (double.IsNegativeInfinity(dValue))
-                            {
-                                prop.SetValue(item, double.MinValue);
-                            }
+                            if (value is null) continue;
+                            var dValue = (double)value;
+                            if (double.IsPositiveInfinity(dValue)) prop.SetValue(item, double.MaxValue);
+                            if (double.IsNegativeInfinity(dValue)) prop.SetValue(item, double.MinValue);
                         }
                     }
                 }
@@ -138,7 +142,7 @@ internal static class Migration
                 var averageBatchTime = batchTimes.Count > 0 ? batchTimes.Average() : 0;
                 var remainingBatches = (totalCount - processedCount) / BatchSize;
                 var estimatedRemainingTime = TimeSpan.FromSeconds(remainingBatches * averageBatchTime);
-                var averageText = batchTimes.Count >= AverageSampleSize
+                var averageFormat = batchTimes.Count >= AverageSampleSize
                     ? estimatedRemainingTime < TimeSpan.FromSeconds(10)
                         ? "Soon..."
                         : estimatedRemainingTime.Humanize()
@@ -147,7 +151,7 @@ internal static class Migration
                 Console.WriteLine(
                     $"[{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}] [Table {tableType.Name} " +
                     $"({i + 1}/{tableDependencyOrder.Count}): Rows ({processedCount:N0}/{totalCount:N0})] " +
-                    $"- ETA: {averageText}");
+                    $"ETA: {averageFormat}");
             }
         }
     }
@@ -212,10 +216,4 @@ internal static class Migration
 
         orderedTableTypes.Add(tableType);
     }
-}
-
-public enum DatabaseType
-{
-    Postgres,
-    MySql
 }

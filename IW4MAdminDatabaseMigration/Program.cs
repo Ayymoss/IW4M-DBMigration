@@ -3,9 +3,9 @@ using Data.Context;
 using Data.MigrationContext;
 using Microsoft.EntityFrameworkCore;
 
-namespace IW4MAdminDatabaseMigration;
+namespace IWDataMigration;
 
-public static class IW4MAdminDatabaseMigration
+public static class IwDataMigration
 {
     private const string DefaultConnectionString = "Host=HOSTNAME;Port=PORT;Username=USERNAME;Password=PASSWORD;Database=DATABASE";
 
@@ -40,7 +40,7 @@ public static class IW4MAdminDatabaseMigration
             Console.WriteLine();
             Console.WriteLine("Migration to:");
             Console.WriteLine("1) PostgreSQL");
-            Console.WriteLine("2) MySQL/MariaDB");
+            Console.WriteLine("2) MariaDB");
             Console.Write("Select [1 or 2]: ");
             var input = Console.ReadLine();
             Console.WriteLine();
@@ -70,7 +70,8 @@ public static class IW4MAdminDatabaseMigration
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"An error occurred: {ex.Message}");
+            Console.WriteLine($"An error occurred: {ex.Message}\n{ex.StackTrace ?? "No trace"}");
+            Console.WriteLine($"Inner exception: {(ex.InnerException?.Message is null ? "None" : $"{ex.InnerException?.Message}\n{ex.StackTrace ?? "No trace"}")}");
             Console.WriteLine("Press any key to exit.");
             Console.ReadKey();
         }
@@ -154,17 +155,21 @@ public static class IW4MAdminDatabaseMigration
     {
         var postgresTargetOptions = new DbContextOptionsBuilder<PostgresqlDatabaseContext>()
             .UseNpgsql(connectionString)
+            .EnableDetailedErrors()
+            .EnableSensitiveDataLogging()
             .Options;
 
-        await Migration.MigrateDataAsync(sourceContext, () => new PostgresqlDatabaseContext(postgresTargetOptions), DatabaseType.Postgres);
+        await Migration.MigrateDataAsync(sourceContext, () => new PostgresqlDatabaseContext(postgresTargetOptions));
     }
 
     private static async Task MigrateToMySql(string connectionString, DatabaseContext sourceContext)
     {
         var mySqlTargetOptions = new DbContextOptionsBuilder<MySqlDatabaseContext>()
             .UseMySql(connectionString, ServerVersion.AutoDetect(connectionString))
+            .EnableDetailedErrors()
+            .EnableSensitiveDataLogging()
             .Options;
 
-        await Migration.MigrateDataAsync(sourceContext, () => new MySqlDatabaseContext(mySqlTargetOptions), DatabaseType.MySql);
+        await Migration.MigrateDataAsync(sourceContext, () => new MySqlDatabaseContext(mySqlTargetOptions));
     }
 }
