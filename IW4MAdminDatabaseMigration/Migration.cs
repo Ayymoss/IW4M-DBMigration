@@ -5,6 +5,7 @@ using Data.Models.Client.Stats;
 using Data.Models.Client.Stats.Reference;
 using Data.Models.Misc;
 using Data.Models.Server;
+using Humanizer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MySqlConnector;
@@ -14,12 +15,14 @@ namespace IW4MAdminDatabaseMigration;
 
 internal static class Migration
 {
-    private const int BatchSize = 10_000;
+    private const int BatchSize = 25_000;
+    private const int AverageSampleSize = 25;
 
-    public static async Task MigrateDataAsync(DatabaseContext sourceContext, Func<DatabaseContext> targetContextFunc)
+    public static async Task MigrateDataAsync(DatabaseContext sourceContext, Func<DatabaseContext> targetContextFunc, DatabaseType databaseType)
     {
         sourceContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
 
+        Console.WriteLine();
         Console.WriteLine("Please wait until the program exits before closing... This will take time!");
         Console.WriteLine();
 
@@ -28,14 +31,14 @@ internal static class Migration
         var tableDependencyOrder = GetTableDependencyOrder(targetContextFunc());
 
         Console.WriteLine($"Migrating {tableDependencyOrder.Count} tables... Please wait...");
-        await MigrateTables(sourceContext, targetContextFunc, tableDependencyOrder);
+        await MigrateTables(sourceContext, targetContextFunc, tableDependencyOrder, databaseType);
 
         Console.WriteLine();
         Console.WriteLine("=====================================================");
-        Console.WriteLine("All tables migrated successfully.");
-        Console.WriteLine("Change IW4MAdminConfigurationSettings.json to reflect the new database.");
-        Console.WriteLine("If you need further help, please ask in Discord.");
-        Console.WriteLine("IW4MAdmin Support: https://discord.gg/kGKusEzUJp");
+        Console.WriteLine(" All tables migrated successfully.");
+        Console.WriteLine(" Change IW4MAdminConfigurationSettings.json to reflect the new database.");
+        Console.WriteLine(" If you need further help, please ask in Discord.");
+        Console.WriteLine(" IW4MAdmin Support: https://discord.gg/kGKusEzUJp");
         Console.WriteLine("=====================================================");
         Console.WriteLine();
         Console.WriteLine("Press any key to exit.");
@@ -53,8 +56,10 @@ internal static class Migration
     }
 
     private static async Task MigrateTables(IAsyncDisposable sourceContext, Func<DatabaseContext> targetContextFunc,
-        IReadOnlyList<Type> tableDependencyOrder)
+        IReadOnlyList<Type> tableDependencyOrder, DatabaseType databaseType)
     {
+        var batchTimes = new Queue<double>(10);
+
         for (var i = 0; i < tableDependencyOrder.Count; i++)
         {
             var tableType = tableDependencyOrder[i];
@@ -63,13 +68,45 @@ internal static class Migration
             if (data is null) continue;
             var totalCount = await data.CountAsync();
 
+            if (totalCount is 0)
+            {
+                Console.WriteLine($"[{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}] [Table {tableType.Name} " +
+                                  $"({i + 1}/{tableDependencyOrder.Count})]: Skipped - No data to migrate.");
+                continue;
+            }
+
             int count, processedCount = 0;
             for (count = 0; count < totalCount; count += BatchSize)
             {
+                var startTime = DateTimeOffset.UtcNow;
+
                 var batch = await data.AsNoTracking()
                     .Skip(count)
                     .Take(BatchSize)
                     .ToListAsync();
+
+                if (databaseType is DatabaseType.MySql)
+                {
+                    foreach (var item in batch)
+                    {
+                        var properties = item.GetType().GetProperties()
+                            .Where(p => p.PropertyType == typeof(double) || p.PropertyType == typeof(double?));
+                        foreach (var prop in properties)
+                        {
+                            var value = prop.GetValue(item);
+                            if (value is not double dValue) continue;
+
+                            if (double.IsPositiveInfinity(dValue))
+                            {
+                                prop.SetValue(item, double.MaxValue);
+                            }
+                            else if (double.IsNegativeInfinity(dValue))
+                            {
+                                prop.SetValue(item, double.MinValue);
+                            }
+                        }
+                    }
+                }
 
                 processedCount += batch.Count;
                 await using var targetContext = targetContextFunc();
@@ -89,13 +126,31 @@ internal static class Migration
                     Environment.Exit(1);
                 }
 
+                var endTime = DateTimeOffset.UtcNow;
+                var timeTaken = (endTime - startTime).TotalSeconds;
+                if (batchTimes.Count >= AverageSampleSize)
+                {
+                    batchTimes.Dequeue();
+                }
+
+                batchTimes.Enqueue(timeTaken);
+
+                var averageBatchTime = batchTimes.Count > 0 ? batchTimes.Average() : 0;
+                var remainingBatches = (totalCount - processedCount) / BatchSize;
+                var estimatedRemainingTime = TimeSpan.FromSeconds(remainingBatches * averageBatchTime);
+                var averageText = batchTimes.Count >= AverageSampleSize
+                    ? estimatedRemainingTime < TimeSpan.FromSeconds(10)
+                        ? "Soon..."
+                        : estimatedRemainingTime.Humanize()
+                    : $"Calculating... ({batchTimes.Count}/{AverageSampleSize})";
+
                 Console.WriteLine(
-                    $"[{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}] {tableType.Name} " +
-                    $"({i + 1}/{tableDependencyOrder.Count}): Completed ({processedCount:N0}/{totalCount:N0})");
+                    $"[{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}] [Table {tableType.Name} " +
+                    $"({i + 1}/{tableDependencyOrder.Count}): Rows ({processedCount:N0}/{totalCount:N0})] " +
+                    $"- ETA: {averageText}");
             }
         }
     }
-
 
     private static List<Type> GetTableDependencyOrder(DbContext context)
     {
@@ -157,4 +212,10 @@ internal static class Migration
 
         orderedTableTypes.Add(tableType);
     }
+}
+
+public enum DatabaseType
+{
+    Postgres,
+    MySql
 }
