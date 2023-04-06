@@ -41,7 +41,7 @@ public static class IwDataMigration
             Console.WriteLine("Migration to:");
             Console.WriteLine("1) PostgreSQL");
             Console.WriteLine("2) MariaDB");
-            Console.Write("Select [1 or 2]: ");
+            Console.Write("Enter [1 or 2]: ");
             var input = Console.ReadLine();
             Console.WriteLine();
 
@@ -71,7 +71,8 @@ public static class IwDataMigration
         catch (Exception ex)
         {
             Console.WriteLine($"An error occurred: {ex.Message}\n{ex.StackTrace ?? "No trace"}");
-            Console.WriteLine($"Inner exception: {(ex.InnerException?.Message is null ? "None" : $"{ex.InnerException?.Message}\n{ex.StackTrace ?? "No trace"}")}");
+            Console.WriteLine(
+                $"Inner exception: {(ex.InnerException?.Message is null ? "None" : $"{ex.InnerException?.Message}\n{ex.StackTrace ?? "No trace"}")}");
             Console.WriteLine("Press any key to exit.");
             Console.ReadKey();
         }
@@ -83,14 +84,15 @@ public static class IwDataMigration
         Console.WriteLine("Instructions:");
         Console.WriteLine("1) Place your database file in the DatabaseSource directory.");
         Console.WriteLine("2) Edit the _ConfigurationString.txt file with your connection string.");
-        Console.WriteLine("3) Enter 'y' to continue migration.");
+        Console.Write("3) Enter 'y' to continue migration. ");
         var key = Console.ReadLine();
         if (key != "y") Environment.Exit(1);
     }
 
     private static string GetDatabaseName()
     {
-        Console.WriteLine("Enter the name of your Database file.");
+        Console.WriteLine();
+        Console.WriteLine("Enter the name of your Database file. (Enter to accept default)");
         Console.Write("Database name [Database.db]: ");
         var databaseName = Console.ReadLine();
         if (string.IsNullOrWhiteSpace(databaseName)) databaseName = "Database.db";
@@ -101,7 +103,7 @@ public static class IwDataMigration
     {
         Console.WriteLine();
         Console.WriteLine("=====================================================");
-        Console.WriteLine(" IW4MAdmin Database Migration");
+        Console.WriteLine(" IW4MAdmin Database Migration Utility");
         Console.WriteLine(" by Ayymoss#8334 ");
         Console.WriteLine($" Version {Assembly.GetExecutingAssembly().GetName().Version}");
         Console.WriteLine("=====================================================");

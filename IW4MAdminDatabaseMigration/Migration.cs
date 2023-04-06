@@ -19,15 +19,14 @@ namespace IWDataMigration;
 internal static class Migration
 {
     private const int BatchSize = 25_000;
-    private const int AverageSampleSize = 100;
+    private const int AverageSampleSize = 50;
+    private static readonly Queue<double> GlobalBatchTimes = new(AverageSampleSize);
 
     public static async Task MigrateDataAsync(DatabaseContext sourceContext, Func<DatabaseContext> targetContextFunc)
     {
         sourceContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
 
-        Console.WriteLine();
-        Console.WriteLine("Please wait until the program exits before closing... This will take time!");
-        Console.WriteLine();
+        DisplayInitialMessages();
 
         await ApplyMigrations(sourceContext, targetContextFunc);
 
@@ -36,16 +35,14 @@ internal static class Migration
         Console.WriteLine($"Migrating {tableDependencyOrder.Count} tables... Please wait...");
         await MigrateTables(sourceContext, targetContextFunc, tableDependencyOrder);
 
+        DisplayFinalMessages();
+    }
+
+    private static void DisplayInitialMessages()
+    {
         Console.WriteLine();
-        Console.WriteLine("=====================================================");
-        Console.WriteLine(" All tables migrated successfully.");
-        Console.WriteLine(" Change IW4MAdminConfigurationSettings.json to reflect the new database.");
-        Console.WriteLine(" If you need further help, please ask in Discord.");
-        Console.WriteLine(" IW4MAdmin Support: https://discord.gg/kGKusEzUJp");
-        Console.WriteLine("=====================================================");
+        Console.WriteLine("Please wait until the program completes before closing... This will take time!");
         Console.WriteLine();
-        Console.WriteLine("Press any key to exit.");
-        Console.ReadKey();
     }
 
     private static async Task ApplyMigrations(DbContext sourceContext, Func<DatabaseContext> targetContextFunc)
@@ -61,18 +58,17 @@ internal static class Migration
     private static async Task MigrateTables(IAsyncDisposable sourceContext, Func<DatabaseContext> targetContextFunc,
         IReadOnlyList<Type> tableDependencyOrder)
     {
-        // Find the incoming database type so we can check specifically for MySQL later...
         await using var dbContextInstance = targetContextFunc();
         var dbContextType = dbContextInstance.GetType();
         await dbContextInstance.DisposeAsync();
 
-        var batchTimes = new Queue<double>(AverageSampleSize);
-
         for (var i = 0; i < tableDependencyOrder.Count; i++)
         {
             var tableType = tableDependencyOrder[i];
-            var data = sourceContext.GetType().GetMethod("Set", Array.Empty<Type>())?
-                .MakeGenericMethod(tableType).Invoke(sourceContext, null) as IQueryable<object>;
+            var data = sourceContext.GetType()
+                .GetMethod("Set", Array.Empty<Type>())?
+                .MakeGenericMethod(tableType)
+                .Invoke(sourceContext, null) as IQueryable<object>;
             if (data is null) continue;
             var totalCount = await data.CountAsync();
 
@@ -83,77 +79,127 @@ internal static class Migration
                 continue;
             }
 
-            int count, processedCount = 0;
-            for (count = 0; count < totalCount; count += BatchSize)
+            await MigrateTableData(sourceContext, targetContextFunc, dbContextType, tableDependencyOrder, i, totalCount);
+        }
+    }
+
+    private static async Task MigrateTableData(IAsyncDisposable sourceContext, Func<DatabaseContext> targetContextFunc,
+        Type dbContextType,
+        IReadOnlyList<Type> tableDependencyOrder, int tableIndex, int totalCount)
+    {
+        int count, processedCount = 0;
+        var tableType = tableDependencyOrder[tableIndex];
+        var data = sourceContext.GetType()
+            .GetMethod("Set", Array.Empty<Type>())?
+            .MakeGenericMethod(tableType)
+            .Invoke(sourceContext, null) as IQueryable<object>;
+
+        for (count = 0; count < totalCount; count += BatchSize)
+        {
+            var startTime = DateTimeOffset.UtcNow;
+            var batch = await data!.AsNoTracking()
+                .Skip(count)
+                .Take(BatchSize)
+                .ToListAsync();
+
+            if (dbContextType == typeof(MySqlDatabaseContext))
             {
-                var startTime = DateTimeOffset.UtcNow;
+                batch = HandleMySqlDoubleValues(batch);
+            }
 
-                var batch = await data.AsNoTracking()
-                    .Skip(count)
-                    .Take(BatchSize)
-                    .ToListAsync();
+            processedCount += batch.Count;
 
-                if (dbContextType == typeof(MySqlDatabaseContext))
-                {
-                    foreach (var item in batch)
-                    {
-                        var properties = item.GetType()
-                            .GetProperties()
-                            .Where(p => p.PropertyType == typeof(double) || p.PropertyType == typeof(double?))
-                            .Where(p => p.GetCustomAttribute<NotMappedAttribute>() is null);
-                        foreach (var prop in properties)
-                        {
-                            var value = prop.GetValue(item);
-                            if (value is null) continue;
-                            var dValue = (double)value;
-                            if (double.IsPositiveInfinity(dValue)) prop.SetValue(item, double.MaxValue);
-                            if (double.IsNegativeInfinity(dValue)) prop.SetValue(item, double.MinValue);
-                        }
-                    }
-                }
+            await using var targetContext = targetContextFunc();
+            targetContext.ChangeTracker.AutoDetectChangesEnabled = false;
+            targetContext.AddRange(batch);
+            try
+            {
+                await targetContext.SaveChangesAsync();
+            }
+            catch (DbUpdateException e) when (e.InnerException is
+                                                  PostgresException {SqlState: "23505"}
+                                                  or MySqlException {ErrorCode: MySqlErrorCode.DuplicateKeyEntry})
+            {
+                Console.WriteLine("ERROR: Data already exists in target database. Please target another database...");
+                Console.WriteLine("Press any key to exit.");
+                Console.ReadKey();
+                Environment.Exit(1);
+            }
 
-                processedCount += batch.Count;
-                await using var targetContext = targetContextFunc();
-                targetContext.ChangeTracker.AutoDetectChangesEnabled = false;
-                targetContext.AddRange(batch);
-                try
-                {
-                    await targetContext.SaveChangesAsync();
-                }
-                catch (DbUpdateException e) when (e.InnerException is
-                                                      PostgresException {SqlState: "23505"}
-                                                      or MySqlException {ErrorCode: MySqlErrorCode.DuplicateKeyEntry})
-                {
-                    Console.WriteLine("ERROR: Data already exists in target database. Please target another database...");
-                    Console.WriteLine("Press any key to exit.");
-                    Console.ReadKey();
-                    Environment.Exit(1);
-                }
+            var endTime = DateTimeOffset.UtcNow;
+            var timeTaken = (endTime - startTime).TotalSeconds;
+            UpdateBatchTimes(timeTaken);
 
-                var endTime = DateTimeOffset.UtcNow;
-                var timeTaken = (endTime - startTime).TotalSeconds;
-                if (batchTimes.Count >= AverageSampleSize)
-                {
-                    batchTimes.Dequeue();
-                }
+            var averageBatchTime = GlobalBatchTimes.Count > 0 ? GlobalBatchTimes.Average() : 0;
+            var remainingBatches = (totalCount - processedCount) / BatchSize;
+            var remainingTables = tableDependencyOrder.Count - (tableIndex + 1);
+            var estimatedRemainingTime = TimeSpan.FromSeconds((remainingBatches + remainingTables) * averageBatchTime);
+            var averageFormat = FormatEstimatedTime(remainingTables, estimatedRemainingTime);
 
-                batchTimes.Enqueue(timeTaken);
 
-                var averageBatchTime = batchTimes.Count > 0 ? batchTimes.Average() : 0;
-                var remainingBatches = (totalCount - processedCount) / BatchSize;
-                var estimatedRemainingTime = TimeSpan.FromSeconds(remainingBatches * averageBatchTime);
-                var averageFormat = batchTimes.Count >= AverageSampleSize
-                    ? estimatedRemainingTime < TimeSpan.FromSeconds(10)
-                        ? "Soon..."
-                        : estimatedRemainingTime.Humanize()
-                    : $"Calculating... ({batchTimes.Count}/{AverageSampleSize})";
+            Console.WriteLine(
+                $"[{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}] [Table {tableType.Name} " +
+                $"({tableIndex + 1}/{tableDependencyOrder.Count}): Rows ({processedCount:N0}/{totalCount:N0})] " +
+                $"ETA: {averageFormat}");
+        }
+    }
 
-                Console.WriteLine(
-                    $"[{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}] [Table {tableType.Name} " +
-                    $"({i + 1}/{tableDependencyOrder.Count}): Rows ({processedCount:N0}/{totalCount:N0})] " +
-                    $"ETA: {averageFormat}");
+    private static List<object> HandleMySqlDoubleValues(List<object> batch)
+    {
+        foreach (var item in batch)
+        {
+            var properties = item.GetType()
+                .GetProperties()
+                .Where(p => p.PropertyType == typeof(double) || p.PropertyType == typeof(double?))
+                .Where(p => p.GetCustomAttribute<NotMappedAttribute>() is null);
+
+            foreach (var prop in properties)
+            {
+                var value = prop.GetValue(item);
+                if (value is null) continue;
+                var dValue = (double)value;
+                if (double.IsPositiveInfinity(dValue)) prop.SetValue(item, double.MaxValue);
+                if (double.IsNegativeInfinity(dValue)) prop.SetValue(item, double.MinValue);
             }
         }
+
+        return batch;
+    }
+
+    private static void UpdateBatchTimes(double timeTaken)
+    {
+        if (GlobalBatchTimes.Count >= AverageSampleSize)
+        {
+            GlobalBatchTimes.Dequeue();
+        }
+
+        GlobalBatchTimes.Enqueue(timeTaken);
+    }
+
+    private static string FormatEstimatedTime(int remainingTables, TimeSpan estimatedRemainingTime)
+    {
+        var totalTables = GlobalBatchTimes.Count + remainingTables;
+        var completedTables = totalTables - remainingTables;
+
+        return GlobalBatchTimes.Count >= AverageSampleSize
+            ? estimatedRemainingTime < TimeSpan.FromSeconds(1)
+                ? "Soon..."
+                : estimatedRemainingTime.Humanize()
+            : $"Calculating... ({completedTables}/{AverageSampleSize})";
+    }
+
+    private static void DisplayFinalMessages()
+    {
+        Console.WriteLine();
+        Console.WriteLine("=====================================================");
+        Console.WriteLine(" All tables migrated successfully.");
+        Console.WriteLine(" Change IW4MAdminConfigurationSettings.json to reflect the new database.");
+        Console.WriteLine(" If you need further help, please ask in Discord.");
+        Console.WriteLine(" IW4MAdmin Support: https://discord.gg/kGKusEzUJp");
+        Console.WriteLine("=====================================================");
+        Console.WriteLine();
+        Console.WriteLine("Press any key to exit.");
+        Console.ReadKey();
     }
 
     private static List<Type> GetTableDependencyOrder(DbContext context)
@@ -196,14 +242,15 @@ internal static class Migration
         return orderedTableTypes;
     }
 
-    private static void AddTableWithDependencies(ICollection<Type> orderedTableTypes, IEntityType[] entityTypes, Type tableType,
+    private static void AddTableWithDependencies(ICollection<Type> orderedTableTypes, IEnumerable<IEntityType> entityTypes, Type tableType,
         ISet<Type> visitedTableTypes)
     {
         if (orderedTableTypes.Contains(tableType) || visitedTableTypes.Contains(tableType)) return;
 
         visitedTableTypes.Add(tableType);
 
-        var table = entityTypes.FirstOrDefault(t => t.ClrType == tableType);
+        var enumerable = entityTypes as IEntityType[] ?? entityTypes.ToArray();
+        var table = enumerable.FirstOrDefault(t => t.ClrType == tableType);
         if (table == null) return;
 
         var foreignKeys = table.GetForeignKeys();
@@ -211,7 +258,7 @@ internal static class Migration
         foreach (var foreignKey in foreignKeys)
         {
             var principalType = foreignKey.PrincipalEntityType.ClrType;
-            AddTableWithDependencies(orderedTableTypes, entityTypes, principalType, new HashSet<Type>(visitedTableTypes));
+            AddTableWithDependencies(orderedTableTypes, enumerable, principalType, new HashSet<Type>(visitedTableTypes));
         }
 
         orderedTableTypes.Add(tableType);

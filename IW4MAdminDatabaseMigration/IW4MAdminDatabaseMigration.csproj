@@ -5,7 +5,7 @@
         <TargetFramework>net6.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <Version>2023.04.05.5</Version>
+        <Version>2023.04.06.1</Version>
         <RootNamespace>IWDataMigration</RootNamespace>
     </PropertyGroup>
 
