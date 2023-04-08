@@ -35,6 +35,10 @@ public static class IwDataMigration
                 .Options;
 
             var sourceContext = new SqliteDatabaseContext(sourceOptions);
+            await sourceContext.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=OFF;");
+            await sourceContext.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys=OFF;");
+            sourceContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+
             AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
             Console.WriteLine();

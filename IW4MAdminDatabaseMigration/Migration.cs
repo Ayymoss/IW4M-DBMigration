@@ -20,12 +20,12 @@ internal static class Migration
 {
     private const int BatchSize = 25_000;
     private const int AverageSampleSize = 50;
+    private static int _totalProcessedRows;
+
     private static readonly Queue<double> GlobalBatchTimes = new(AverageSampleSize);
 
     public static async Task MigrateDataAsync(DatabaseContext sourceContext, Func<DatabaseContext> targetContextFunc)
     {
-        sourceContext.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
-
         DisplayInitialMessages();
 
         await ApplyMigrations(sourceContext, targetContextFunc);
@@ -62,9 +62,12 @@ internal static class Migration
         var dbContextType = dbContextInstance.GetType();
         await dbContextInstance.DisposeAsync();
 
-        for (var i = 0; i < tableDependencyOrder.Count; i++)
+        var totalTableRows = await GetTotalTableRows(sourceContext, tableDependencyOrder);
+        Console.WriteLine($"Total rows to migrate: {totalTableRows:N0}");
+
+        for (var tableIndex = 0; tableIndex < tableDependencyOrder.Count; tableIndex++)
         {
-            var tableType = tableDependencyOrder[i];
+            var tableType = tableDependencyOrder[tableIndex];
             var data = sourceContext.GetType()
                 .GetMethod("Set", Array.Empty<Type>())?
                 .MakeGenericMethod(tableType)
@@ -75,17 +78,34 @@ internal static class Migration
             if (totalCount is 0)
             {
                 Console.WriteLine($"[{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}] [Table {tableType.Name} " +
-                                  $"({i + 1}/{tableDependencyOrder.Count})]: Skipped - No data to migrate.");
+                                  $"({tableIndex + 1}/{tableDependencyOrder.Count})]: Skipped - No data to migrate.");
                 continue;
             }
 
-            await MigrateTableData(sourceContext, targetContextFunc, dbContextType, tableDependencyOrder, i, totalCount);
+            await MigrateTableData(sourceContext, targetContextFunc, dbContextType, tableDependencyOrder, tableIndex, totalCount,
+                totalTableRows);
         }
+    }
+
+    private static async Task<int> GetTotalTableRows(IAsyncDisposable sourceContext, IReadOnlyList<Type> tableDependencyOrder)
+    {
+        var totalRowCount = 0;
+        foreach (var table in tableDependencyOrder)
+        {
+            var data = sourceContext.GetType()
+                .GetMethod("Set", Array.Empty<Type>())?
+                .MakeGenericMethod(table)
+                .Invoke(sourceContext, null) as IQueryable<object>;
+            if (data is null) continue;
+            totalRowCount += await data.CountAsync();
+        }
+
+        return totalRowCount;
     }
 
     private static async Task MigrateTableData(IAsyncDisposable sourceContext, Func<DatabaseContext> targetContextFunc,
         Type dbContextType,
-        IReadOnlyList<Type> tableDependencyOrder, int tableIndex, int totalCount)
+        IReadOnlyList<Type> tableDependencyOrder, int tableIndex, int totalCount, int totalTableRows)
     {
         int count, processedCount = 0;
         var tableType = tableDependencyOrder[tableIndex];
@@ -108,6 +128,7 @@ internal static class Migration
             }
 
             processedCount += batch.Count;
+            _totalProcessedRows += batch.Count;
 
             await using var targetContext = targetContextFunc();
             targetContext.ChangeTracker.AutoDetectChangesEnabled = false;
@@ -135,12 +156,12 @@ internal static class Migration
             var remainingTables = tableDependencyOrder.Count - (tableIndex + 1);
             var estimatedRemainingTime = TimeSpan.FromSeconds((remainingBatches + remainingTables) * averageBatchTime);
             var averageFormat = FormatEstimatedTime(remainingTables, estimatedRemainingTime);
-
+            var percentageComplete = _totalProcessedRows / (double)totalTableRows * 100;
 
             Console.WriteLine(
                 $"[{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}] [Table {tableType.Name} " +
                 $"({tableIndex + 1}/{tableDependencyOrder.Count}): Rows ({processedCount:N0}/{totalCount:N0})] " +
-                $"ETA: {averageFormat}");
+                $"[ETA: {averageFormat}, PCT: {percentageComplete:N2}%]");
         }
     }
 
