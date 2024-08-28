@@ -11,12 +11,11 @@ public class AppEntry
     private string? _connectionString;
     private SqliteDatabaseContext? _sourceContext;
 
-    private readonly Dictionary<string, DatabaseTypes> MigrationChoices = new()
+    private readonly Dictionary<string, DatabaseTypes> _migrationChoices = new()
     {
         {"PostgreSQL", DatabaseTypes.Postgres},
         {"MariaDB", DatabaseTypes.MariaDb}
     };
-
 
     public async Task App()
     {
@@ -59,14 +58,14 @@ public class AppEntry
 
             var promptSelection = AnsiConsole.Prompt(new SelectionPrompt<string> {HighlightStyle = new Style().Foreground(Color.Cyan1)}
                 .Title("Select Migration Target Database")
-                .AddChoices(MigrationChoices.Keys));
+                .AddChoices(_migrationChoices.Keys));
             AnsiConsole.MarkupLine($"{promptSelection} selected. Close the application now if this is a mistake.");
             Console.WriteLine();
 
             var procRule = new Rule("[red]Migration Started[/]") {Justification = Justify.Left};
             AnsiConsole.Write(procRule);
 
-            var selectedDatabase = MigrationChoices[promptSelection];
+            var selectedDatabase = _migrationChoices[promptSelection];
             switch (selectedDatabase)
             {
                 case DatabaseTypes.Postgres:
@@ -84,10 +83,8 @@ public class AppEntry
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"An error occurred: {ex.Message}\n{ex.StackTrace ?? "No trace"}");
-            AnsiConsole.MarkupLine(
-                $"Inner exception: {(ex.InnerException?.Message is null ? "None" : $"{ex.InnerException?.Message}\n{ex.StackTrace ?? "No trace"}")}");
-            AnsiConsole.MarkupLine("Press any key to exit.");
+            AnsiConsole.WriteException(ex);
+            Console.WriteLine("Press any key to exit.");
             Console.ReadKey();
         }
 
@@ -159,7 +156,7 @@ public class AppEntry
         }
         catch (Exception e)
         {
-            AnsiConsole.MarkupLine("Exception: {Error}", e);
+            AnsiConsole.WriteException(e);
         }
     }
 

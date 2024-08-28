@@ -24,7 +24,6 @@ public class MigrationHelper(DatabaseContext sourceContext, Func<DatabaseContext
 
     public async Task MigrateDataAsync()
     {
-        Console.WriteLine();
         await using var dbContextInstance = targetContextFunc();
 
         AnsiConsole.MarkupLine("Please wait until the program completes before closing... This will take time!");

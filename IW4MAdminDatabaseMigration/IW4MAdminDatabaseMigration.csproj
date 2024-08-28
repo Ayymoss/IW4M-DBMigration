@@ -8,6 +8,7 @@
         <Nullable>enable</Nullable>
         <Version>2024.02.14.1</Version>
         <RootNamespace>IWDataMigration</RootNamespace>
+        <PublishAot>true</PublishAot>
     </PropertyGroup>
 
     <ItemGroup>
