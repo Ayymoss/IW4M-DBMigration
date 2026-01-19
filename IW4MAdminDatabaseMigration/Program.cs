@@ -1,15 +1,36 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using IWDataMigration;
+using IWDataMigration.Abstractions;
+using IWDataMigration.Models;
+using IWDataMigration.Services;
+using IWDataMigration.UI;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace IWDataMigration;
+// Build service collection with all dependencies
+var services = new ServiceCollection();
 
-public static class Program
+// Options
+services.Configure<MigrationOptions>(_ => { });
+
+// UI Services
+services.AddSingleton<IConsoleService, ConsoleService>();
+
+// Services
+services.AddSingleton<IDataTransformer, DataTransformer>();
+services.AddSingleton<TableDependencyResolver>();
+services.AddSingleton<IConfigurationService, ConfigurationService>();
+
+// Orchestrator
+services.AddSingleton<MigrationOrchestrator>();
+
+// Build and run
+var serviceProvider = services.BuildServiceProvider();
+
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) =>
 {
-    public static async Task Main()
-    {
-        var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<AppEntry>();
+    e.Cancel = true;
+    cts.Cancel();
+};
 
-        var app = serviceCollection.BuildServiceProvider();
-        await app.GetRequiredService<AppEntry>().App();
-    }
-}
+var orchestrator = serviceProvider.GetRequiredService<MigrationOrchestrator>();
+await orchestrator.RunAsync(cts.Token);
