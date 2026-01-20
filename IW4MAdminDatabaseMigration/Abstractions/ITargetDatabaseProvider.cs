@@ -26,6 +26,14 @@ public interface ITargetDatabaseProvider : IAsyncDisposable
     Task WriteBatchAsync<T>(IEnumerable<T> batch, CancellationToken cancellationToken = default) where T : class;
 
     /// <summary>
+    /// Writes a batch of entities, ignoring duplicates that already exist.
+    /// Used when resuming to handle rows that may have been written before checkpoint.
+    /// PostgreSQL: INSERT ... ON CONFLICT DO NOTHING
+    /// MySQL: INSERT IGNORE
+    /// </summary>
+    Task WriteBatchIgnoreDuplicatesAsync<T>(IEnumerable<T> batch, CancellationToken cancellationToken = default) where T : class;
+
+    /// <summary>
     /// Updates auto-increment sequences after migration (PostgreSQL-specific).
     /// </summary>
     Task UpdateSequencesAsync(CancellationToken cancellationToken = default);

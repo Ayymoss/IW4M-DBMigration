@@ -18,6 +18,8 @@ services.AddSingleton<IConsoleService, ConsoleService>();
 services.AddSingleton<IDataTransformer, DataTransformer>();
 services.AddSingleton<TableDependencyResolver>();
 services.AddSingleton<IConfigurationService, ConfigurationService>();
+services.AddSingleton<IMigrationStateService, MigrationStateService>();
+services.AddSingleton<IWatchdogService, WatchdogService>();
 
 // Orchestrator
 services.AddSingleton<MigrationOrchestrator>();

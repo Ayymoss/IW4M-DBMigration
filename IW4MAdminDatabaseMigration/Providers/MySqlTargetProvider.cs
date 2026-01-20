@@ -65,6 +65,31 @@ public sealed class MySqlTargetProvider : ITargetDatabaseProvider
         }
     }
 
+    public async Task WriteBatchIgnoreDuplicatesAsync<T>(IEnumerable<T> batch, CancellationToken cancellationToken = default) where T : class
+    {
+        var items = batch.ToList();
+        if (items.Count == 0) return;
+
+        await using var context = _contextFactory();
+        context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        // Insert one at a time to handle duplicates gracefully
+        // This is slower but safe for resume scenarios
+        foreach (var item in items)
+        {
+            try
+            {
+                context.Set<T>().Add(item);
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException e) when (e.InnerException is MySqlException { ErrorCode: MySqlErrorCode.DuplicateKeyEntry })
+            {
+                // Duplicate key - silently skip (expected during resume)
+                context.Entry(item).State = EntityState.Detached;
+            }
+        }
+    }
+
     public Task UpdateSequencesAsync(CancellationToken cancellationToken = default)
     {
         // MySQL/MariaDB handles auto-increment automatically

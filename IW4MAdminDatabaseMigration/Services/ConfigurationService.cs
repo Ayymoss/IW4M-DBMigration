@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using IWDataMigration.Abstractions;
 using IWDataMigration.Models;
 using Microsoft.Extensions.Options;
@@ -27,10 +28,24 @@ public sealed class ConfigurationService(IConsoleService console, IOptions<Migra
     {
         EnsureDirectoriesExist();
         await EnsureConnectionStringFileExistsAsync();
+        await LoadUserSettingsAsync();
     }
 
     public async Task InitializeAsync()
     {
+        // Display loaded settings
+        console.DisplayRule("Settings");
+        var settings = _options.UserSettings;
+        console.DisplayMessage($"Batch Size: [cyan]{settings.BatchSize:N0}[/] rows");
+        console.DisplayMessage($"Checkpoint Interval: [cyan]{settings.CheckpointIntervalSeconds}[/] seconds");
+        console.DisplayMessage($"Watchdog Timeout: [cyan]{settings.WatchdogTimeoutMinutes}[/] minutes");
+        console.DisplayMessage($"Max Retries: [cyan]{settings.MaxBatchRetries}[/]");
+        if (settings.VerboseLogging)
+        {
+            console.DisplayMessage("[yellow]Verbose logging enabled[/]");
+        }
+        Console.WriteLine();
+
         console.DisplayRule("Locations");
         console.DisplayMessage($"Database Source Directory: {GetDatabaseSourcePath()}");
         console.DisplayMessage($"Connection String Location: {GetConnectionStringPath()}");
@@ -100,6 +115,60 @@ public sealed class ConfigurationService(IConsoleService console, IOptions<Migra
         Console.WriteLine();
     }
 
+    public async Task InitializeFromResumeAsync(DatabaseType sourceType, DatabaseType targetType)
+    {
+        // Set types from saved state
+        _sourceType = sourceType;
+        _targetType = targetType;
+
+        // Display loaded settings
+        console.DisplayRule("Settings (from previous session)");
+        var settings = _options.UserSettings;
+        console.DisplayMessage($"Batch Size: [cyan]{settings.BatchSize:N0}[/] rows");
+        console.DisplayMessage($"Watchdog Timeout: [cyan]{settings.WatchdogTimeoutMinutes}[/] minutes");
+        Console.WriteLine();
+
+        // Load source connection based on type
+        if (_sourceType == DatabaseType.Sqlite)
+        {
+            // For SQLite, we need to find the database file
+            // Use the default name since we can't prompt
+            var dbPath = Path.Join(GetDatabaseSourcePath(), _options.DefaultDatabaseFileName);
+            if (!File.Exists(dbPath))
+            {
+                // Try to find any .db file
+                var dbFiles = Directory.GetFiles(GetDatabaseSourcePath(), "*.db");
+                if (dbFiles.Length == 0)
+                {
+                    console.DisplayError("No database file found in DatabaseSource directory.");
+                    console.WaitForKey("Press any key to exit.");
+                    Environment.Exit(1);
+                }
+                dbPath = dbFiles[0];
+            }
+            _sourceConnection = $"Data Source={dbPath}";
+            console.DisplayMessage($"Source: [cyan]{Path.GetFileName(dbPath)}[/] (SQLite)");
+        }
+        else
+        {
+            // MySQL/MariaDB - load from connection string file
+            var sourceConnPath = Path.Join(_executingDirectory, "_SourceConnectionString.txt");
+            if (!File.Exists(sourceConnPath))
+            {
+                console.DisplayError("_SourceConnectionString.txt not found. Cannot resume.");
+                console.WaitForKey("Press any key to exit.");
+                Environment.Exit(1);
+            }
+            _sourceConnection = await File.ReadAllTextAsync(sourceConnPath);
+            console.DisplayMessage($"Source: [cyan]MySQL/MariaDB[/] (from connection file)");
+        }
+
+        // Load target connection
+        _targetConnection = await File.ReadAllTextAsync(GetConnectionStringPath());
+        console.DisplayMessage($"Target: [cyan]{_targetType}[/] (from connection file)");
+        Console.WriteLine();
+    }
+
     public bool Validate()
     {
         return !string.IsNullOrWhiteSpace(_sourceConnection) &&
@@ -147,4 +216,44 @@ public sealed class ConfigurationService(IConsoleService console, IOptions<Migra
 
     private string GetConnectionStringPath() =>
         Path.Join(_executingDirectory, _options.ConnectionStringFileName);
+
+    private string GetSettingsPath() =>
+        Path.Join(_executingDirectory, _options.SettingsFileName);
+
+    private async Task LoadUserSettingsAsync()
+    {
+        var settingsPath = GetSettingsPath();
+
+        if (!File.Exists(settingsPath))
+        {
+            // Create default settings file
+            var defaultSettings = new UserSettings();
+            var json = JsonSerializer.Serialize(defaultSettings, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(settingsPath, json);
+            console.DisplayMessage($"Created [cyan]{_options.SettingsFileName}[/] with default settings.");
+            _options.UserSettings = defaultSettings;
+            return;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(settingsPath);
+            var settings = JsonSerializer.Deserialize<UserSettings>(json);
+            if (settings is not null)
+            {
+                // Validate settings
+                if (settings.BatchSize <= 0) settings.BatchSize = 25_000;
+                if (settings.CheckpointIntervalSeconds <= 0) settings.CheckpointIntervalSeconds = 30;
+                if (settings.WatchdogTimeoutMinutes <= 0) settings.WatchdogTimeoutMinutes = 5;
+                if (settings.MaxBatchRetries <= 0) settings.MaxBatchRetries = 3;
+
+                _options.UserSettings = settings;
+            }
+        }
+        catch (JsonException ex)
+        {
+            console.DisplayError($"Failed to parse {_options.SettingsFileName}: {ex.Message}");
+            console.DisplayMessage("Using default settings.");
+        }
+    }
 }

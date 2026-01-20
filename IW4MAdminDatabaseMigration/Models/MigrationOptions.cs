@@ -6,9 +6,9 @@ namespace IWDataMigration.Models;
 public sealed class MigrationOptions
 {
     /// <summary>
-    /// Number of records to process in each batch.
+    /// Number of records to process in each batch (delegated to UserSettings).
     /// </summary>
-    public int BatchSize { get; set; } = 25_000;
+    public int BatchSize => UserSettings.BatchSize;
 
     /// <summary>
     /// Directory where source database files are located.
@@ -30,4 +30,19 @@ public sealed class MigrationOptions
     /// Default source database file name.
     /// </summary>
     public string DefaultDatabaseFileName { get; set; } = "Database.db";
+
+    /// <summary>
+    /// Settings file name for user configuration.
+    /// </summary>
+    public string SettingsFileName { get; set; } = "_settings.json";
+
+    /// <summary>
+    /// State file name for resume capability.
+    /// </summary>
+    public string StateFileName { get; set; } = "_migration_state.json";
+
+    /// <summary>
+    /// User-configurable settings loaded from file.
+    /// </summary>
+    public UserSettings UserSettings { get; set; } = new();
 }

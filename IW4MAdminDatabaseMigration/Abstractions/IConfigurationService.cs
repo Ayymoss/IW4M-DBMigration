@@ -35,6 +35,11 @@ public interface IConfigurationService
     Task InitializeAsync();
 
     /// <summary>
+    /// Initializes configuration from saved resume state without prompting.
+    /// </summary>
+    Task InitializeFromResumeAsync(DatabaseType sourceType, DatabaseType targetType);
+
+    /// <summary>
     /// Validates the current configuration.
     /// </summary>
     bool Validate();

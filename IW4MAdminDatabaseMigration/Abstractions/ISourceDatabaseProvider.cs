@@ -31,6 +31,15 @@ public interface ISourceDatabaseProvider : IAsyncDisposable
     IAsyncEnumerable<IReadOnlyList<T>> ReadBatchesAsync<T>(int batchSize, CancellationToken cancellationToken = default) where T : class;
 
     /// <summary>
+    /// Reads entities from the source database in batches, starting from a specific offset.
+    /// Used for resuming a migration from a checkpoint.
+    /// </summary>
+    IAsyncEnumerable<IReadOnlyList<T>> ReadBatchesFromOffsetAsync<T>(
+        int batchSize,
+        int startOffset,
+        CancellationToken cancellationToken = default) where T : class;
+
+    /// <summary>
     /// Gets the list of entity types to migrate in dependency order.
     /// </summary>
     IReadOnlyList<Type> GetMigrationOrder();

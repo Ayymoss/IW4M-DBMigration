@@ -60,4 +60,10 @@ public interface IConsoleService
     /// Displays an exception to the console.
     /// </summary>
     void DisplayException(Exception ex);
+
+    /// <summary>
+    /// Prompts user whether to resume a previous migration.
+    /// </summary>
+    /// <returns>True to resume, false to start fresh.</returns>
+    bool PromptResume(string tableName, int rowsCompleted, long totalMigrated, DateTime lastUpdated);
 }

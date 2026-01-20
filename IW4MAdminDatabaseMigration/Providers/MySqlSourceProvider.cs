@@ -61,10 +61,21 @@ public sealed class MySqlSourceProvider : ISourceDatabaseProvider
         int batchSize,
         [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
     {
-        var totalCount = await GetCountAsync<T>(cancellationToken);
-        if (totalCount == 0) yield break;
+        await foreach (var batch in ReadBatchesFromOffsetAsync<T>(batchSize, 0, cancellationToken))
+        {
+            yield return batch;
+        }
+    }
 
-        for (var offset = 0; offset < totalCount; offset += batchSize)
+    public async IAsyncEnumerable<IReadOnlyList<T>> ReadBatchesFromOffsetAsync<T>(
+        int batchSize,
+        int startOffset,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
+    {
+        var totalCount = await GetCountAsync<T>(cancellationToken);
+        if (totalCount == 0 || startOffset >= totalCount) yield break;
+
+        for (var offset = startOffset; offset < totalCount; offset += batchSize)
         {
             cancellationToken.ThrowIfCancellationRequested();
 

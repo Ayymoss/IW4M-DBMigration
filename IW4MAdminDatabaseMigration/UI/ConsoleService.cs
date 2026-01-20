@@ -98,4 +98,17 @@ public sealed class ConsoleService : IConsoleService
     {
         AnsiConsole.WriteException(ex);
     }
+
+    public bool PromptResume(string tableName, int rowsCompleted, long totalMigrated, DateTime lastUpdated)
+    {
+        AnsiConsole.WriteLine();
+        DisplayRule("Previous Migration Found", "yellow");
+        AnsiConsole.MarkupLine($"  Last active table: [cyan]{tableName}[/]");
+        AnsiConsole.MarkupLine($"  Rows in current table: [cyan]{rowsCompleted:N0}[/]");
+        AnsiConsole.MarkupLine($"  Total rows migrated: [cyan]{totalMigrated:N0}[/]");
+        AnsiConsole.MarkupLine($"  Last updated: [cyan]{lastUpdated:g}[/] UTC");
+        AnsiConsole.WriteLine();
+
+        return Confirm("Resume from this checkpoint?");
+    }
 }
